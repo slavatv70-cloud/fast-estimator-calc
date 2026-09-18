@@ -4039,43 +4039,37 @@ class WeldingTab(QWidget):
                     "Расход присадочной проволоки:"][method]
         self.mat_label.setText(mat_text)
         DENSITY = 7850; F = 0.0; length_m = 0.0
-		if cat_idx == 0:
-			D = self.get_value(self.pipe_D_edit); S = self.get_value(self.pipe_S_edit)
-			count = self.get_int_value(self.pipe_count_edit)
-			joint_text = self.pipe_joint_combo.currentText(); joint = joint_text.split("-")[0].strip()
-			if not (D > 0 and S > 0 and count > 0): return
-			length_m = (math.pi * (D - S) / 1000.0) * count
-			if joint == "С2":
-				if S <= 3.0:
-					b = 1.0
-					g = 1.0
-					e = S + b + 1.0
-				elif S <= 5.0:
-					b = 2.0
-					g = 1.5
-					e = S + b + 2.0
-				else:
-					b = 3.0
-					g = 2.0
-					e = 10.0
-				F = (S * b) + ((2.0 / 3.0) * e * g)
-			elif joint == "С8":
-				b = 1.5; c = 1.5; angle = 30
-				h_bevel = S - c; b_bevel = h_bevel * math.tan(math.radians(angle))
-				g = 2.0; e = b + b_bevel + 3
-				F = (S * b) + (0.5 * b_bevel * h_bevel) + (0.75 * e * g)
-			elif joint == "С17":
-				b = 2.0; c = 1.5; angle = 60
-				h_bevel = S - c; b_bevel = 2 * (h_bevel * math.tan(math.radians(angle / 2)))
-				g = 2.0; e = b + b_bevel + 2
-				F = (S * b) + (0.5 * b_bevel * h_bevel) + (0.75 * e * g)
-			elif joint == "У7":
-				K = S; angle = 45
-				F_bevel = 0.5 * K * (K * math.tan(math.radians(angle)))
-				F = F_bevel + (0.2 * K * K)
+        if cat_idx == 0:
+            D = self.get_value(self.pipe_D_edit); S = self.get_value(self.pipe_S_edit)
+            count = self.get_int_value(self.pipe_count_edit)
+            joint_text = self.pipe_joint_combo.currentText(); joint = joint_text.split("-").strip()
+            if not (D > 0 and S > 0 and count > 0): return
+            length_m = (math.pi * (D - S) / 1000.0) * count
+            if joint == "С2":
+                if S <= 3.0:
+                    b = 1.0; g = 1.0; e = S + b + 1.0
+                elif S <= 5.0:
+                    b = 2.0; g = 1.5; e = S + b + 2.0
+                else:
+                    b = 3.0; g = 2.0; e = 10.0
+                F = (S * b) + ((2.0 / 3.0) * e * g)
+            elif joint == "С8":
+                b = 1.5; c = 1.5; angle = 30
+                h_bevel = S - c; b_bevel = h_bevel * math.tan(math.radians(angle))
+                g = 2.0; e = b + b_bevel + 3
+                F = (S * b) + (0.5 * b_bevel * h_bevel) + (0.75 * e * g)
+            elif joint == "С17":
+                b = 2.0; c = 1.5; angle = 60
+                h_bevel = S - c; b_bevel = 2 * (h_bevel * math.tan(math.radians(angle / 2)))
+                g = 2.0; e = b + b_bevel + 2
+                F = (S * b) + (0.5 * b_bevel * h_bevel) + (0.75 * e * g)
+            elif joint == "У7":
+                K = S; angle = 45
+                F_bevel = 0.5 * K * (K * math.tan(math.radians(angle)))
+                F = F_bevel + (0.2 * K * K)
         elif cat_idx == 1:
             S = self.get_value(self.sheet_S_edit); L = self.get_value(self.sheet_L_edit)
-            joint_text = self.sheet_joint_combo.currentText(); joint = joint_text.split("-")[0].strip()
+            joint_text = self.sheet_joint_combo.currentText(); joint = joint_text.split("-").strip()
             if S > 0 and L > 0:
                 length_m = L; K = S; F_single = (0.5 * K * K) * 1.2
                 if joint in ("Н1", "Т1", "У4"): F = F_single
