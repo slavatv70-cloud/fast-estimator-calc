@@ -4039,29 +4039,29 @@ class WeldingTab(QWidget):
                     "Расход присадочной проволоки:"][method]
         self.mat_label.setText(mat_text)
         DENSITY = 7850; F = 0.0; length_m = 0.0
-        if cat_idx == 0:
+                if cat_idx == 0:
             D = self.get_value(self.pipe_D_edit); S = self.get_value(self.pipe_S_edit)
             count = self.get_int_value(self.pipe_count_edit)
-    joint_text = self.pipe_joint_combo.currentText(); joint = joint_text.split("—")[0].strip()
-    if not (D > 0 and S > 0 and count > 0): return
-    length_m = (math.pi * (D - S) / 1000.0) * count
-    if joint == "С2":
-                    # Динамический подбор параметров шва С2 по ГОСТ 16037-80 в зависимости от стенки
-                    if S <= 3.0:
-                        b = 1.0  # зазор, мм
-                        g = 1.0  # высота усиления, мм
-                        e = S + b + 1.0  # ширина шва, мм
-                    elif S <= 5.0:
-                        b = 2.0
-                        g = 1.5
-                        e = S + b + 2.0
-                    else:  # Для S = 6 мм и более
-                        b = 3.0  # нормативный зазор по стандарту
-                        g = 2.0  # нормальное усиление шва
-                        e = 10.0 # ширина шва для стенки 6-8 мм
-                    
-                    # F = площадь зазора (прямоугольник) + площадь усиления шва (парабола 2/3 * e * g)
-                    F = (S * b) + ((2.0 / 3.0) * e * g)
+            joint_text = self.pipe_joint_combo.currentText(); joint = joint_text.split("-")[0].strip()
+            if not (D > 0 and S > 0 and count > 0): return
+            length_m = (math.pi * (D - S) / 1000.0) * count
+            if joint == "С2":
+                # Динамический подбор параметров шва С2 по ГОСТ 16037-80 в зависимости от стенки
+                if S <= 3.0:
+                    b = 1.0  # зазор, мм
+                    g = 1.0  # высота усиления, мм
+                    e = S + b + 1.0  # ширина шва, мм
+                elif S <= 5.0:
+                    b = 2.0
+                    g = 1.5
+                    e = S + b + 2.0
+                else:  # Для S = 6 мм и более
+                    b = 3.0  # нормативный зазор по стандарту
+                    g = 2.0  # нормальное усиление шва
+                    e = 10.0 # ширина шва для стенки 6-8 мм
+                
+                # F = площадь зазора (прямоугольник) + площадь усиления шва (парабола 2/3 * e * g)
+                F = (S * b) + ((2.0 / 3.0) * e * g)
             elif joint == "С8":
                 b = 1.5; c = 1.5; angle = 30
                 h_bevel = S - c; b_bevel = h_bevel * math.tan(math.radians(angle))
@@ -4072,7 +4072,7 @@ class WeldingTab(QWidget):
                 h_bevel = S - c; b_bevel = 2 * (h_bevel * math.tan(math.radians(angle / 2)))
                 g = 2.0; e = b + b_bevel + 2
                 F = (S * b) + (0.5 * b_bevel * h_bevel) + (0.75 * e * g)
-            elif joint in ("У5", "У8"):
+
                 K = S; F_single = (0.5 * K * K) + (0.2 * K * K)
                 F = F_single * 2 if joint == "У8" else F_single
             elif joint == "У7":
