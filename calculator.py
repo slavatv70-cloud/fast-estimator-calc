@@ -630,11 +630,26 @@ def calculate_multiple_pipes_insulation_variant1(D1, D2, t, p, L):
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
 
 def calculate_multiple_pipes_insulation_variant2(D1, M, t, L):
-    Sr = (math.pi * D1 + 2 * M) * L
-    Spi = (math.pi * (D1 + 2 * t) + 2 * M) * L
-    S_outer = (math.pi / 4) * (D1 + 2 * t) ** 2 + M * (D1 + 2 * t)
-    S_inner = (math.pi / 4) * D1 ** 2 + M * D1
-    Vi = (S_outer - S_inner) * L
+    # Sr - честная площадь поверхности двух металлических труб
+    Sr = (math.pi * D1 * 2) * L
+    
+    # Полные внешние габариты изоляционного пучка (овальное сечение)
+    W_outer = M + D1 + 2 * t  # полная ширина с изоляцией
+    H_outer = D1 + 2 * t      # полная высота с изоляцией
+    
+    # Площадь внешнего покровного слоя (периметр овала * длина)
+    Spi = (2 * M + math.pi * H_outer) * L
+    
+    # Честный расчет объемов через сечение овального контура:
+    # 1. Полная площадь сечения внешнего кожуха (прямоугольник + круг)
+    S_outer_total = (M * H_outer) + (math.pi / 4.0) * (H_outer ** 2)
+    
+    # 2. Фактическая площадь сечения двух внутренних металлических труб
+    S_pipes_total = 2 * ((math.pi / 4.0) * (D1 ** 2))
+    
+    # 3. Объем чистой изоляции (Внешний овал минус металл труб)
+    Vi = (S_outer_total - S_pipes_total) * L
+    
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
 
 def calculate_bolt_weight_formula(diameter_mm, length_mm, density=STEEL_DENSITY):
@@ -3132,7 +3147,7 @@ class FastenerTab(QWidget):
                 weight_one = self.calculate_weight_one(
                     type_name, std_name, diameter, length, thickness, density)
                 if weight_one == 0: continue
-                weight_one *= COATING_FACTOR.get(coat_name, 1.0)
+                                weight_one *= COATING_FACTOR.get(coat_name, 1.0)
                 weight_total = weight_one * qty
                 if isinstance(widgets.get('weight_one'), QLabel):
                     widgets['weight_one'].setText(format_number(weight_one, 6, self))
@@ -4029,9 +4044,23 @@ class WeldingTab(QWidget):
             joint_text = self.pipe_joint_combo.currentText(); joint = joint_text.split("—")[0].strip()
             if D > 0 and S > 0 and count > 0:
                 length_m = (math.pi * (D - S) / 1000.0) * count
-                if joint == "С2":
-                    b = 1.0 if S <= 3 else 1.5; g = 1.5; e = S + b + 2
-                    F = (S * b) + (0.75 * e * g)
+                                if joint == "С2":
+                    # Динамический подбор параметров шва С2 по ГОСТ 16037-80 в зависимости от стенки
+                    if S <= 3.0:
+                        b = 1.0  # зазор, мм
+                        g = 1.0  # высота усиления, мм
+                        e = S + b + 1.0  # ширина шва, мм
+                    elif S <= 5.0:
+                        b = 2.0
+                        g = 1.5
+                        e = S + b + 2.0
+                    else:  # Для S = 6 мм и более
+                        b = 3.0  # нормативный зазор по стандарту
+                        g = 2.0  # нормальное усиление шва
+                        e = 10.0 # ширина шва для стенки 6-8 мм
+                    
+                    # F = площадь зазора (прямоугольник) + площадь усиления шва (парабола 2/3 * e * g)
+                    F = (S * b) + ((2.0 / 3.0) * e * g)
                 elif joint == "С8":
                     b = 1.5; c = 1.5; angle = 30
                     h_bevel = S - c; b_bevel = h_bevel * math.tan(math.radians(angle))
