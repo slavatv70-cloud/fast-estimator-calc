@@ -4042,10 +4042,10 @@ class WeldingTab(QWidget):
         if cat_idx == 0:
             D = self.get_value(self.pipe_D_edit); S = self.get_value(self.pipe_S_edit)
             count = self.get_int_value(self.pipe_count_edit)
-            joint_text = self.pipe_joint_combo.currentText(); joint = joint_text.split("—")[0].strip()
-                if not (D > 0 and S > 0 and count > 0): return
-                length_m = (math.pi * (D - S) / 1000.0) * count
-                if joint == "С2":
+    joint_text = self.pipe_joint_combo.currentText(); joint = joint_text.split("—")[0].strip()
+    if not (D > 0 and S > 0 and count > 0): return
+    length_m = (math.pi * (D - S) / 1000.0) * count
+    if joint == "С2":
                     # Динамический подбор параметров шва С2 по ГОСТ 16037-80 в зависимости от стенки
                     if S <= 3.0:
                         b = 1.0  # зазор, мм
