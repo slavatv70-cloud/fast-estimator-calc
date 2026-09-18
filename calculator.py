@@ -3147,7 +3147,8 @@ class FastenerTab(QWidget):
                 weight_one = self.calculate_weight_one(
                     type_name, std_name, diameter, length, thickness, density)
                 if weight_one == 0: continue
-                                weight_one *= COATING_FACTOR.get(coat_name, 1.0)
+                if self.get_density() == STEEL_DENSITY:
+                    weight_one *= COATING_FACTOR.get(coat_name, 1.0)
                 weight_total = weight_one * qty
                 if isinstance(widgets.get('weight_one'), QLabel):
                     widgets['weight_one'].setText(format_number(weight_one, 6, self))
