@@ -3,7 +3,7 @@
 
 """
 Калькулятор Сметчика
-Версия 5.4 (редактирование пользовательских материалов прямо в диалоге)
+Версия 5.4.2 (исправлен расчёт угловых соединений У5 и У8 во вкладке «Сварка»)
 """
 
 import sys
@@ -632,24 +632,24 @@ def calculate_multiple_pipes_insulation_variant1(D1, D2, t, p, L):
 def calculate_multiple_pipes_insulation_variant2(D1, M, t, L):
     # Sr - честная площадь поверхности двух металлических труб
     Sr = (math.pi * D1 * 2) * L
-    
+
     # Полные внешние габариты изоляционного пучка (овальное сечение)
     W_outer = M + D1 + 2 * t  # полная ширина с изоляцией
     H_outer = D1 + 2 * t      # полная высота с изоляцией
-    
+
     # Площадь внешнего покровного слоя (периметр овала * длина)
     Spi = (2 * M + math.pi * H_outer) * L
-    
+
     # Честный расчет объемов через сечение овального контура:
     # 1. Полная площадь сечения внешнего кожуха (прямоугольник + круг)
     S_outer_total = (M * H_outer) + (math.pi / 4.0) * (H_outer ** 2)
-    
+
     # 2. Фактическая площадь сечения двух внутренних металлических труб
     S_pipes_total = 2 * ((math.pi / 4.0) * (D1 ** 2))
-    
+
     # 3. Объем чистой изоляции (Внешний овал минус металл труб)
     Vi = (S_outer_total - S_pipes_total) * L
-    
+
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
 
 def calculate_bolt_weight_formula(diameter_mm, length_mm, density=STEEL_DENSITY):
@@ -4042,7 +4042,8 @@ class WeldingTab(QWidget):
         if cat_idx == 0:
             D = self.get_value(self.pipe_D_edit); S = self.get_value(self.pipe_S_edit)
             count = self.get_int_value(self.pipe_count_edit)
-            joint_text = self.pipe_joint_combo.currentText(); joint = joint_text.split("-").strip()
+            joint_text = self.pipe_joint_combo.currentText()
+            joint = joint_text.split("—")[0].strip()
             if not (D > 0 and S > 0 and count > 0): return
             length_m = (math.pi * (D - S) / 1000.0) * count
             if joint == "С2":
@@ -4063,13 +4064,23 @@ class WeldingTab(QWidget):
                 h_bevel = S - c; b_bevel = 2 * (h_bevel * math.tan(math.radians(angle / 2)))
                 g = 2.0; e = b + b_bevel + 2
                 F = (S * b) + (0.5 * b_bevel * h_bevel) + (0.75 * e * g)
+            elif joint == "У5":
+                # Угловое без скоса кромок (с фланцем). Односторонний угловой шов, катет K ≈ S.
+                K = S
+                F = 0.7 * K * K
             elif joint == "У7":
+                # Угловое со скосом одной кромки. Угол скоса 45°, катет K ≈ S.
                 K = S; angle = 45
                 F_bevel = 0.5 * K * (K * math.tan(math.radians(angle)))
                 F = F_bevel + (0.2 * K * K)
+            elif joint == "У8":
+                # Угловое двустороннее без скоса. Два угловых шва по K ≈ S.
+                K = S
+                F = 2 * 0.7 * K * K
         elif cat_idx == 1:
             S = self.get_value(self.sheet_S_edit); L = self.get_value(self.sheet_L_edit)
-            joint_text = self.sheet_joint_combo.currentText(); joint = joint_text.split("-").strip()
+            joint_text = self.sheet_joint_combo.currentText()
+            joint = joint_text.split("—")[0].strip()
             if S > 0 and L > 0:
                 length_m = L; K = S; F_single = (0.5 * K * K) * 1.2
                 if joint in ("Н1", "Т1", "У4"): F = F_single
@@ -4158,7 +4169,7 @@ class HelpTab(QWidget):
         dev_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         dev_label.setStyleSheet("font-size: 12px; color: #9cdcfe; background-color: #2d2d30; padding: 10px; border-radius: 4px;")
         layout.addWidget(dev_label)
-        version = QLabel("Версия 5.4 (редактирование пользовательских материалов в диалоге)")
+        version = QLabel("Версия 5.4.2 (исправлен расчёт угловых соединений У5 и У8 во вкладке «Сварка»)")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version.setStyleSheet("font-size: 11px; color: #8b949e;"); layout.addWidget(version)
         layout.addStretch()
