@@ -621,37 +621,25 @@ def calculate_single_pipe_insulation(D, t, L):
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
 
 def calculate_multiple_pipes_insulation_variant1(D1, D2, t, p, L):
-    M = D2 + 2 * p
+    # М — точное расстояние между осями (центрами) крайних труб в ряду
+    M = (D1 / 2) + p + D2 + p + (D1 / 2)  # Упрощается до: D1 + D2 + 2*p
+    
     Sr = (math.pi * D1 + 2 * M) * L
     Spi = (math.pi * (D1 + 2 * t) + 2 * M) * L
-    S_outer = (math.pi / 4) * (D1 + 2 * t) ** 2 + M * (D1 + 2 * t)
-    S_inner = (math.pi / 4) * D1 ** 2 + M * D1
-    Vi = (S_outer - S_inner) * L
+    
+    # Объем через площадь сечения стенки овала: площадь круглого кольца + 2 плоских участка
+    Vi = (math.pi * t * (D1 + t) + 2 * M * t) * L
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
 
 def calculate_multiple_pipes_insulation_variant2(D1, M, t, L):
-    # Sr - честная площадь поверхности двух металлических труб
-    Sr = (math.pi * D1 * 2) * L
-
-    # Полные внешние габариты изоляционного пучка (овальное сечение)
-    W_outer = M + D1 + 2 * t  # полная ширина с изоляцией
-    H_outer = D1 + 2 * t      # полная высота с изоляцией
-
-    # Площадь внешнего покровного слоя (периметр овала * длина)
-    Spi = (2 * M + math.pi * H_outer) * L
-
-    # Честный расчет объемов через сечение овального контура:
-    # 1. Полная площадь сечения внешнего кожуха (прямоугольник + круг)
-    S_outer_total = (M * H_outer) + (math.pi / 4.0) * (H_outer ** 2)
-
-    # 2. Фактическая площадь сечения двух внутренних металлических труб
-    S_pipes_total = 2 * ((math.pi / 4.0) * (D1 ** 2))
-
-    # 3. Объем чистой изоляции (Внешний овал минус металл труб)
-    Vi = (S_outer_total - S_pipes_total) * L
-
+    # М — уже задано пользователем как расстояние между осями крайних труб
+    Sr = (math.pi * D1 + 2 * M) * L
+    Spi = (math.pi * (D1 + 2 * t) + 2 * M) * L
+    
+    # Объем через точную площадь сечения стенки овала
+    Vi = (math.pi * t * (D1 + t) + 2 * M * t) * L
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
-
+            
 def calculate_bolt_weight_formula(diameter_mm, length_mm, density=STEEL_DENSITY):
     d = int(diameter_mm); L = int(length_mm)
     if d not in BOLT_PARAMETERS: return None
