@@ -3,10 +3,12 @@
 
 """
 Калькулятор Сметчика
-Версия 5.4.2 (исправлен расчёт угловых соединений У5 и У8 во вкладке «Сварка»)
+Версия 5.6 (исправлены формулы площади окраски швеллера и двутавра,
+           формула уголка, расход защитных газов при сварке)
 """
 
 import sys
+import os
 import math
 import random
 import re
@@ -31,7 +33,8 @@ from PyQt6.QtWidgets import (
 from PyQt6.QtCore import Qt, QTimer, QRect, QPoint, QSettings, QRectF, QPointF, QLocale, QSize
 from PyQt6.QtGui import (
     QFont, QBrush, QPainter, QColor, QPen,
-    QDoubleValidator, QIntValidator, QPainterPath, QKeyEvent, QValidator
+    QDoubleValidator, QIntValidator, QPainterPath, QKeyEvent, QValidator,
+    QPixmap
 )
 
 try:
@@ -69,15 +72,13 @@ BUILTIN_MATERIALS = {
     "Латунь": 8500,
 }
 
-# Коэффициенты изменения массы крепежа в зависимости от покрытия.
 COATING_FACTOR = {
     "Без покрытия": 1.00,
-    "Оцинкованный": 1.02,             # +2 % на слой цинка
+    "Оцинкованный": 1.02,
     "Черный фосфатированный": 1.00,
     "—": 1.00,
 }
 
-# Заголовки столбцов 3/4/5 в «Крепеже» зависят от типа метиза.
 HEADERS_BY_TYPE = {
     "Болт":          ("Диаметр, мм",          "Длина, мм",           "—"),
     "Винт":          ("Диаметр, мм",          "Длина, мм",           "—"),
@@ -123,6 +124,16 @@ SANDBLAST_ABRASIVES = {
     "Электрокорунд":   {"k_consumption": 0.70, "k_time": 0.85, "k_reuse": 3.0, "color": "#6d6875"},
     "Стальная дробь":  {"k_consumption": 0.30, "k_time": 0.80, "k_reuse": 10.0, "color": "#95a5a6"},
 }
+
+# ============================================================================
+#  СВАРКА — расход защитных газов
+# ============================================================================
+
+CO2_LITERS_PER_METER = 60.0
+CO2_DENSITY_KG_PER_LITER = 0.00185
+CO2_CYLINDER_KG = 25.0
+AR_LITERS_PER_METER = 150.0
+AR_CYLINDER_LITERS = 6000.0
 
 # ============================================================================
 #  СОРТАМЕНТ ГОСТ
@@ -283,6 +294,38 @@ AKZ_STANDARDS = [
      "consumption_min": 0.120, "consumption_max": 0.170, "unit": "кг/м²",
      "dry_thickness": "25–40 мкм", "layers": 2, "interval": "2–6 ч"},
 ]
+
+# ============================================================================
+#  ПОЛЬЗОВАТЕЛЬСКИЕ ИЗОБРАЖЕНИЯ СХЕМ
+# ============================================================================
+
+_IMAGES_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "images")
+
+SECTION_IMAGES = [
+    "section_pipe.png",
+    "section_circle.png",
+    "section_channel.png",
+    "section_beam.png",
+    "section_sheet.png",
+    "section_hexagon.png",
+    "section_angle.png",
+]
+
+WELD_IMAGES = {
+    "C2":    "weld_C2.png",
+    "C8":    "weld_C8.png",
+    "C17":   "weld_C17.png",
+    "U5":    "weld_U5.png",
+    "U7":    "weld_U7.png",
+    "U8":    "weld_U8.png",
+    "H1":    "weld_H1.png",
+    "H2":    "weld_H2.png",
+    "T1":    "weld_T1.png",
+    "T3":    "weld_T3.png",
+    "U4":    "weld_U4.png",
+    "U5_S":  "weld_U5_S.png",
+    "C25":   "weld_C25.png",
+}
 
 # ============================================================================
 #  ВАЛИДАТОР
@@ -621,25 +664,18 @@ def calculate_single_pipe_insulation(D, t, L):
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
 
 def calculate_multiple_pipes_insulation_variant1(D1, D2, t, p, L):
-    # М — точное расстояние между осями (центрами) крайних труб в ряду
-    M = (D1 / 2) + p + D2 + p + (D1 / 2)  # Упрощается до: D1 + D2 + 2*p
-    
-    Sr = (math.pi * D1 + 2 * M) * L
-    Spi = (math.pi * (D1 + 2 * t) + 2 * M) * L
-    
-    # Объем через площадь сечения стенки овала: площадь круглого кольца + 2 плоских участка
-    Vi = (math.pi * t * (D1 + t) + 2 * M * t) * L
+    M = D1 + D2 + 2 * p
+    Sr  = (2 * M + math.pi * D1) * L
+    Spi = (2 * M + math.pi * (D1 + 2 * t)) * L
+    Vi  = (2 * t * M + math.pi * t * (D1 + t)) * L
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
 
 def calculate_multiple_pipes_insulation_variant2(D1, M, t, L):
-    # М — уже задано пользователем как расстояние между осями крайних труб
-    Sr = (math.pi * D1 + 2 * M) * L
-    Spi = (math.pi * (D1 + 2 * t) + 2 * M) * L
-    
-    # Объем через точную площадь сечения стенки овала
-    Vi = (math.pi * t * (D1 + t) + 2 * M * t) * L
+    Sr  = (2 * M + math.pi * D1) * L
+    Spi = (2 * M + math.pi * (D1 + 2 * t)) * L
+    Vi  = (2 * t * M + math.pi * t * (D1 + t)) * L
     return {'Sr': Sr, 'Spi': Spi, 'Vi': Vi}
-            
+
 def calculate_bolt_weight_formula(diameter_mm, length_mm, density=STEEL_DENSITY):
     d = int(diameter_mm); L = int(length_mm)
     if d not in BOLT_PARAMETERS: return None
@@ -686,14 +722,31 @@ def paint_area_circle(diameter_mm, length_m):
     d = diameter_mm / 1000.0
     return math.pi * d * length_m
 
-def paint_area_channel(height_mm, flange_width_mm, wall_thickness_mm, length_m):
-    h = height_mm / 1000.0; b = flange_width_mm / 1000.0; s = wall_thickness_mm / 1000.0
-    P = 2 * h + 4 * b - 2 * s
+def paint_area_channel(height_mm, flange_width_mm, wall_thickness_mm,
+                       flange_thickness_mm, length_m):
+    """Площадь окраски швеллера.
+
+    P = 2h + 4b − 2s − 4t — периметр по внешнему и внутреннему контуру
+    П-образного профиля с учётом толщины стенки s и толщины полки t.
+    """
+    h = height_mm / 1000.0
+    b = flange_width_mm / 1000.0
+    s = wall_thickness_mm / 1000.0
+    t = flange_thickness_mm / 1000.0
+    P = 2 * h + 4 * b - 2 * s - 4 * t
     return P * length_m
 
 def paint_area_beam(height_mm, flange_width_mm, web_thickness_mm, flange_thickness_mm, length_m):
-    h = height_mm / 1000.0; b = flange_width_mm / 1000.0; s = web_thickness_mm / 1000.0
-    P = 2 * h + 4 * b - 2 * s
+    """Площадь окраски двутавра.
+
+    P = 2h + 4b − 2s − 4t — периметр по внешнему и внутреннему контуру
+    двутаврового профиля с учётом толщины стенки s и толщины полки t.
+    """
+    h = height_mm / 1000.0
+    b = flange_width_mm / 1000.0
+    s = web_thickness_mm / 1000.0
+    t = flange_thickness_mm / 1000.0
+    P = 2 * h + 4 * b - 2 * s - 4 * t
     return P * length_m
 
 def paint_area_sheet(width_mm, length_mm):
@@ -707,8 +760,14 @@ def paint_area_hexagon(size_across_flats_mm, length_m):
     return P * length_m
 
 def paint_area_angle(side_a_mm, side_b_mm, thickness_mm, length_m):
-    a = side_a_mm / 1000.0; b = side_b_mm / 1000.0
-    P = 2 * a + 2 * b
+    """Площадь окраски уголка.
+
+    P = 2a + 2b − 2t — периметр по внешнему контуру Г-образного профиля.
+    """
+    a = side_a_mm / 1000.0
+    b = side_b_mm / 1000.0
+    t = thickness_mm / 1000.0
+    P = 2 * a + 2 * b - 2 * t
     return P * length_m
 
 def calculate_sandblasting(degree: str, abrasive: str, area: float):
@@ -1034,7 +1093,7 @@ QPushButton#addButton:hover { background-color: #3fb950; }
 QPushButton#deleteButton { background-color: #da3633; min-width: 30px; padding: 4px 8px; }
 QPushButton#deleteButton:hover { background-color: #f85149; }
 QLabel { color: #e0e0e0; background-color: transparent; }
-QLabel#resultLabel { color: #4ec9b0; font-size: 15px; font-weight: bold; padding: 8px; background-color: #1e3a2e; border: 1px solid #4ec9b0; border-radius: 6px; }
+QLabel#resultLabel { color: #4ec9b0; font-size: 14px; font-weight: bold; padding: 5px; background-color: #1e3a2e; border: 1px solid #4ec9b0; border-radius: 6px; }
 QLabel#titleLabel { color: #569cd6; font-size: 20px; font-weight: bold; padding: 10px 0; }
 QLabel#unitLabel { color: #9cdcfe; font-size: 11px; }
 QLabel#infoLabel { color: #8b949e; font-size: 11px; font-style: italic; }
@@ -1048,32 +1107,11 @@ QTableWidget {
     border-radius: 4px;
     font-size: 11px;
 }
-QTableWidget::item {
-    padding: 3px;
-    border: none;
-    background-color: #252526;
-    color: #e0e0e0;
-}
-QTableWidget::item:alternate {
-    background-color: #2d2d30;
-    color: #e0e0e0;
-}
-QTableWidget::item:selected {
-    background-color: #007acc;
-    color: #ffffff;
-}
-QTableCornerButton::section {
-    background-color: #2d2d30;
-    border: 1px solid #3c3c3c;
-}
-QHeaderView::section {
-    background-color: #2d2d30;
-    color: #cccccc;
-    padding: 6px;
-    border: 1px solid #3c3c3c;
-    font-weight: bold;
-    font-size: 11px;
-}
+QTableWidget::item { padding: 3px; border: none; background-color: #252526; color: #e0e0e0; }
+QTableWidget::item:alternate { background-color: #2d2d30; color: #e0e0e0; }
+QTableWidget::item:selected { background-color: #007acc; color: #ffffff; }
+QTableCornerButton::section { background-color: #2d2d30; border: 1px solid #3c3c3c; }
+QHeaderView::section { background-color: #2d2d30; color: #cccccc; padding: 6px; border: 1px solid #3c3c3c; font-weight: bold; font-size: 11px; }
 QRadioButton { color: #e0e0e0; spacing: 8px; }
 QRadioButton::indicator { width: 16px; height: 16px; }
 QRadioButton::indicator:checked { background-color: #007acc; border: 2px solid #007acc; border-radius: 8px; }
@@ -1098,7 +1136,7 @@ QMenu::item:selected { background-color: #007acc; color: #ffffff; }
 """
 
 # ============================================================================
-#  ДИАЛОГ: МАТЕРИАЛЫ (с редактированием пользовательских прямо в таблице)
+#  ДИАЛОГ: МАТЕРИАЛЫ
 # ============================================================================
 
 class MaterialsDialog(QDialog):
@@ -1108,7 +1146,7 @@ class MaterialsDialog(QDialog):
         self.setMinimumSize(560, 500)
         self.setModal(True)
         self.custom_materials = dict(custom_materials)
-        self._updating_table = False  # защита от рекурсивного itemChanged
+        self._updating_table = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(15, 15, 15, 15)
@@ -1163,117 +1201,81 @@ class MaterialsDialog(QDialog):
 
         self._refresh_table()
 
-    # ---------------------------------------------------------------
-    #  Заполнение таблицы
-    # ---------------------------------------------------------------
     def _refresh_table(self):
         self._updating_table = True
         try:
             self.table.setRowCount(0)
-
-            # Встроенные — только просмотр
             for name, density in BUILTIN_MATERIALS.items():
                 row = self.table.rowCount()
                 self.table.insertRow(row)
-
                 item_name = QTableWidgetItem(name)
                 item_name.setFlags(item_name.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
                 item_density = QTableWidgetItem(f"{density}")
                 item_density.setFlags(item_density.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
                 item_src = QTableWidgetItem("встроенный")
                 item_src.setFlags(item_src.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
                 for it in (item_name, item_density, item_src):
                     it.setForeground(QBrush(QColor("#8b949e")))
-
                 self.table.setItem(row, 0, item_name)
                 self.table.setItem(row, 1, item_density)
                 self.table.setItem(row, 2, item_src)
 
-            # Пользовательские — редактируемые столбцы 0 и 1
             for name, density in self.custom_materials.items():
                 row = self.table.rowCount()
                 self.table.insertRow(row)
-
                 item_name = QTableWidgetItem(name)
                 item_name.setData(Qt.ItemDataRole.UserRole, name)
-
                 item_density = QTableWidgetItem(f"{density}")
                 item_density.setData(Qt.ItemDataRole.UserRole, name)
-
                 item_src = QTableWidgetItem("пользовательский")
                 item_src.setFlags(item_src.flags() & ~Qt.ItemFlag.ItemIsEditable)
-
                 self.table.setItem(row, 0, item_name)
                 self.table.setItem(row, 1, item_density)
                 self.table.setItem(row, 2, item_src)
         finally:
             self._updating_table = False
 
-    # ---------------------------------------------------------------
-    #  Обработка правок
-    # ---------------------------------------------------------------
     def _on_item_changed(self, item: QTableWidgetItem):
         if self._updating_table:
             return
         row, col = item.row(), item.column()
         if col not in (0, 1):
             return
-
         src_item = self.table.item(row, 2)
         if src_item is None or src_item.text() != "пользовательский":
             return
-
         name_item = self.table.item(row, 0)
         density_item = self.table.item(row, 1)
         if name_item is None or density_item is None:
             return
-
         original_name = name_item.data(Qt.ItemDataRole.UserRole)
         if not original_name:
             return
-
         new_name = name_item.text().strip()
         new_density_text = density_item.text().strip().replace(',', '.')
-
-        # --- Валидация названия ---
         if not new_name:
             QMessageBox.warning(self, "Ошибка",
                                 "Название материала не может быть пустым.")
-            self._restore_row(row, original_name)
-            return
+            self._restore_row(row, original_name); return
         if new_name in BUILTIN_MATERIALS:
-            QMessageBox.warning(
-                self, "Ошибка",
-                f"Название «{new_name}» совпадает со встроенным материалом.")
-            self._restore_row(row, original_name)
-            return
+            QMessageBox.warning(self, "Ошибка",
+                                f"Название «{new_name}» совпадает со встроенным материалом.")
+            self._restore_row(row, original_name); return
         if new_name != original_name and new_name in self.custom_materials:
-            QMessageBox.warning(
-                self, "Ошибка",
-                f"Материал «{new_name}» уже существует в пользовательских.")
-            self._restore_row(row, original_name)
-            return
-
-        # --- Валидация плотности ---
+            QMessageBox.warning(self, "Ошибка",
+                                f"Материал «{new_name}» уже существует в пользовательских.")
+            self._restore_row(row, original_name); return
         try:
             new_density = float(new_density_text)
             if not (0.0 < new_density <= 25000.0):
                 raise ValueError
         except (ValueError, TypeError):
-            QMessageBox.warning(
-                self, "Ошибка",
-                "Плотность должна быть числом в диапазоне 1…25000 кг/м³.")
-            self._restore_row(row, original_name)
-            return
-
-        # --- Применение изменений ---
+            QMessageBox.warning(self, "Ошибка",
+                                "Плотность должна быть числом в диапазоне 1…25000 кг/м³.")
+            self._restore_row(row, original_name); return
         if new_name != original_name:
             self.custom_materials.pop(original_name, None)
         self.custom_materials[new_name] = new_density
-
         self._updating_table = True
         try:
             name_item.setText(new_name)
@@ -1284,7 +1286,6 @@ class MaterialsDialog(QDialog):
             self._updating_table = False
 
     def _restore_row(self, row: int, original_name: str) -> None:
-        """Откатить содержимое строки к текущему состоянию словаря."""
         self._updating_table = True
         try:
             name_item = self.table.item(row, 0)
@@ -1298,9 +1299,6 @@ class MaterialsDialog(QDialog):
         finally:
             self._updating_table = False
 
-    # ---------------------------------------------------------------
-    #  Кнопки
-    # ---------------------------------------------------------------
     def _add_material(self):
         name, ok = QInputDialog.getText(self, "Новый материал", "Название:")
         if not ok or not name.strip():
@@ -1321,18 +1319,15 @@ class MaterialsDialog(QDialog):
     def _delete_selected(self):
         rows = self.table.selectionModel().selectedRows()
         if not rows:
-            QMessageBox.information(self, "Информация",
-                                    "Выберите строку для удаления")
-            return
+            QMessageBox.information(self, "Информация", "Выберите строку для удаления"); return
         for idx in sorted([r.row() for r in rows], reverse=True):
             name_item = self.table.item(idx, 0)
             src_item = self.table.item(idx, 2)
             if not name_item or not src_item:
                 continue
             if src_item.text() != "пользовательский":
-                QMessageBox.information(
-                    self, "Информация",
-                    "Встроенные материалы удалить нельзя.")
+                QMessageBox.information(self, "Информация",
+                                        "Встроенные материалы удалить нельзя.")
                 continue
             name = name_item.text()
             self.custom_materials.pop(name, None)
@@ -1341,10 +1336,9 @@ class MaterialsDialog(QDialog):
     def _reset_custom(self):
         if not self.custom_materials:
             return
-        reply = QMessageBox.question(
-            self, "Сбросить?",
-            "Удалить все пользовательские материалы?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        reply = QMessageBox.question(self, "Сбросить?",
+                                     "Удалить все пользовательские материалы?",
+                                     QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
         if reply == QMessageBox.StandardButton.Yes:
             self.custom_materials.clear()
             self._refresh_table()
@@ -1597,8 +1591,9 @@ class TetrisWidget(QWidget):
         self.score = 0; self.lines_cleared = 0; self.level = 1
         self.game_over = False; self.paused = False
         self.pause_button.setText("⏸ ПАУЗА")
+        self.fall_speed = 500
         self.timer.start(16); self.fall_timer.start(self.fall_speed)
-        self.fall_speed = 500; self.bomb_charges = 1; self.pulse_timer = 0
+        self.bomb_charges = 1; self.pulse_timer = 0
         self.placing_bomb = False; self.particles = []; self.floating_texts = []
         self.shake_timer = 0; self.flash_rows = []; self.flash_timer = 0
         self.shake_offset = QPoint(0, 0); self.fall_timer.setInterval(self.fall_speed)
@@ -2200,19 +2195,16 @@ class SortamentTab(QWidget):
 
     def calculate(self):
         if self.current_mass_per_m is None:
-            QMessageBox.warning(self, "Ошибка", "Сначала выберите размер из сортамента")
-            return
+            QMessageBox.warning(self, "Ошибка", "Сначала выберите размер из сортамента"); return
         if not self.length_edit.text().strip():
             mark_invalid(self.length_edit, True)
-            QMessageBox.warning(self, "Ошибка ввода", "Введите длину")
-            return
+            QMessageBox.warning(self, "Ошибка ввода", "Введите длину"); return
         try:
             length = float(self.length_edit.text().strip().replace(',', '.'))
             if length <= 0: raise ValueError
         except ValueError:
             mark_invalid(self.length_edit, True)
-            QMessageBox.warning(self, "Ошибка ввода", "Введите положительную длину")
-            return
+            QMessageBox.warning(self, "Ошибка ввода", "Введите положительную длину"); return
         total = self.current_mass_per_m * length
         self.total_mass_label.setText(f"Общая масса: {format_number(total, 3, self)} кг")
         product = self.product_combo.currentText()
@@ -2377,28 +2369,22 @@ class ProfilesTab(QWidget):
 
     def calculate(self):
         if self.current_mass_per_m is None:
-            QMessageBox.warning(self, "Ошибка", "Выберите типоразмер")
-            return
+            QMessageBox.warning(self, "Ошибка", "Выберите типоразмер"); return
         if not self.length_edit.text().strip():
             mark_invalid(self.length_edit, True)
-            QMessageBox.warning(self, "Ошибка ввода", "Введите длину")
-            return
+            QMessageBox.warning(self, "Ошибка ввода", "Введите длину"); return
         try:
             length = float(self.length_edit.text().strip().replace(',', '.'))
-            if length <= 0:
-                raise ValueError
+            if length <= 0: raise ValueError
         except ValueError:
             mark_invalid(self.length_edit, True)
-            QMessageBox.warning(self, "Ошибка ввода", "Введите положительную длину")
-            return
+            QMessageBox.warning(self, "Ошибка ввода", "Введите положительную длину"); return
         try:
             qty = int(float(self.qty_edit.text().strip().replace(',', '.') or "0"))
-            if qty <= 0:
-                raise ValueError
+            if qty <= 0: raise ValueError
         except ValueError:
             mark_invalid(self.qty_edit, True)
-            QMessageBox.warning(self, "Ошибка ввода", "Введите положительное количество")
-            return
+            QMessageBox.warning(self, "Ошибка ввода", "Введите положительное количество"); return
 
         total_length = length * qty
         total_mass = self.current_mass_per_m * total_length
@@ -2667,22 +2653,19 @@ class SandblastTab(QWidget):
         if not self.passes_edit.text().strip():
             mark_invalid(self.passes_edit, True); invalid.append(self.passes_edit)
         if invalid:
-            QMessageBox.warning(self, "Ошибка ввода", "Заполните выделенные поля")
-            return
+            QMessageBox.warning(self, "Ошибка ввода", "Заполните выделенные поля"); return
         try:
             area = float(self.area_edit.text().strip().replace(',', '.'))
             if area <= 0: raise ValueError
         except ValueError:
             mark_invalid(self.area_edit, True)
-            QMessageBox.warning(self, "Ошибка ввода", "Введите положительную площадь")
-            return
+            QMessageBox.warning(self, "Ошибка ввода", "Введите положительную площадь"); return
         try:
             passes = int(float(self.passes_edit.text().strip().replace(',', '.')))
             if passes < 1: passes = 1
         except ValueError:
             mark_invalid(self.passes_edit, True)
-            QMessageBox.warning(self, "Ошибка ввода", "Количество проходов — целое число")
-            return
+            QMessageBox.warning(self, "Ошибка ввода", "Количество проходов — целое число"); return
 
         degree = self.degree_combo.currentText()
         abrasive = self.abrasive_combo.currentText()
@@ -2721,153 +2704,353 @@ class SandblastTab(QWidget):
 
 
 # ============================================================================
-#  ИЗОЛЯЦИЯ
+#  ИЗОЛЯЦИЯ — формулы по эталонному Excel
 # ============================================================================
 
 class InsulationTab(QWidget):
     def __init__(self):
-        super().__init__(); self.init_ui()
+        super().__init__()
+        self.v1_inputs: Dict[str, QLineEdit] = {}
+        self.v2_inputs: Dict[str, QLineEdit] = {}
+        self.single_inputs: Dict[str, QLineEdit] = {}
+        self.v1_results: Dict[str, QLabel] = {}
+        self.v2_results: Dict[str, QLabel] = {}
+        self.single_results: Dict[str, QLabel] = {}
+        self.init_ui()
 
     def init_ui(self):
         main_layout = QHBoxLayout(self)
-        main_layout.setContentsMargins(15, 15, 15, 15); main_layout.setSpacing(15)
-        left_widget = QWidget(); layout = QVBoxLayout(left_widget)
-        layout.setContentsMargins(0, 0, 0, 0); layout.setSpacing(15)
-        info_group = QGroupBox("Расчет объема тепловой изоляции труб")
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(15)
+
+        left_widget = QWidget()
+        layout = QVBoxLayout(left_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        info_group = QGroupBox("Расчёт объёма тепловой изоляции труб")
         info_layout = QVBoxLayout(info_group)
-        info_text = QLabel("Калькулятор позволяет рассчитать объем изоляции, площадь покровного слоя "
-                          "и площадь обертывания для одной или нескольких труб.")
-        info_text.setObjectName("infoLabel"); info_text.setWordWrap(True)
-        info_layout.addWidget(info_text); layout.addWidget(info_group)
-        type_group = QGroupBox("Тип расчета"); type_layout = QHBoxLayout(type_group)
-        self.radio_single = QRadioButton("Одна труба")
-        self.radio_multiple_v1 = QRadioButton("Несколько труб (Вариант 1 - три трубы)")
-        self.radio_multiple_v2 = QRadioButton("Несколько труб (Вариант 2 - 2 и более труб)")
-        self.radio_single.setChecked(True)
-        type_layout.addWidget(self.radio_single); type_layout.addWidget(self.radio_multiple_v1)
-        type_layout.addWidget(self.radio_multiple_v2); type_layout.addStretch()
-        self.radio_single.toggled.connect(self.on_calc_type_changed)
-        self.radio_multiple_v1.toggled.connect(self.on_calc_type_changed)
-        self.radio_multiple_v2.toggled.connect(self.on_calc_type_changed)
-        layout.addWidget(type_group)
-        self.input_group = QGroupBox("Параметры")
-        self.input_layout = QVBoxLayout(self.input_group)
-        self.input_widgets = {}; self.create_input_fields()
-        layout.addWidget(self.input_group)
-        button_layout = QHBoxLayout(); button_layout.addStretch()
-        self.calculate_btn = QPushButton("🧮 Рассчитать"); self.calculate_btn.clicked.connect(self.calculate)
+        info_text = QLabel(
+            "Калькулятор рассчитывает объём изоляции, площадь покровного слоя "
+            "и площадь обертывания (окраски) для одной или нескольких труб.\n"
+            "Все линейные размеры вводятся в метрах. Формулы соответствуют "
+            "эталонному Excel-шаблону «Расчет объема тепловой изоляции труб.xls»."
+        )
+        info_text.setObjectName("infoLabel")
+        info_text.setWordWrap(True)
+        info_layout.addWidget(info_text)
+        layout.addWidget(info_group)
+
+        panels_row = QHBoxLayout()
+        panels_row.setSpacing(10)
+        panels_row.addWidget(self._create_v1_panel(), stretch=1)
+        panels_row.addWidget(self._create_v2_panel(), stretch=1)
+        panels_row.addWidget(self._create_single_panel(), stretch=1)
+        layout.addLayout(panels_row, stretch=1)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        self.calc_v1_btn = QPushButton("Рассчитать Вариант 1")
+        self.calc_v1_btn.clicked.connect(lambda: self.calculate_one("v1"))
+        button_layout.addWidget(self.calc_v1_btn)
+
+        self.calc_v2_btn = QPushButton("Рассчитать Вариант 2")
+        self.calc_v2_btn.clicked.connect(lambda: self.calculate_one("v2"))
+        button_layout.addWidget(self.calc_v2_btn)
+
+        self.calc_single_btn = QPushButton("Рассчитать одну трубу")
+        self.calc_single_btn.clicked.connect(lambda: self.calculate_one("single"))
+        button_layout.addWidget(self.calc_single_btn)
+
+        self.calculate_btn = QPushButton("🧮 Рассчитать всё")
+        self.calculate_btn.clicked.connect(self.calculate_all)
         button_layout.addWidget(self.calculate_btn)
-        self.clear_btn = QPushButton("Очистить"); self.clear_btn.clicked.connect(self.clear_fields)
-        button_layout.addWidget(self.clear_btn); button_layout.addStretch()
+
+        self.clear_btn = QPushButton("🗑 Очистить всё")
+        self.clear_btn.clicked.connect(self.clear_fields)
+        button_layout.addWidget(self.clear_btn)
+        button_layout.addStretch()
         layout.addLayout(button_layout)
-        result_group = QGroupBox("Результаты расчета"); result_layout = QVBoxLayout(result_group)
-        self.Sr_label = QLabel("Площадь обертывания труб (Sr): — м²")
-        self.Sr_label.setObjectName("resultLabel"); result_layout.addWidget(self.Sr_label)
-        self.Spi_label = QLabel("Площадь покровного слоя изоляции (Spi): — м²")
-        self.Spi_label.setObjectName("resultLabel"); result_layout.addWidget(self.Spi_label)
-        self.Vi_label = QLabel("Объем изоляции (Vi): — м³")
-        self.Vi_label.setObjectName("resultLabel"); result_layout.addWidget(self.Vi_label)
-        layout.addWidget(result_group); layout.addStretch()
+
         main_layout.addWidget(left_widget, stretch=3)
-        history_group = QGroupBox("История расчетов"); history_layout = QVBoxLayout(history_group)
-        self.history_list = QListWidget(); self.history_list.setWordWrap(True)
+
+        history_group = QGroupBox("История расчетов")
+        history_layout = QVBoxLayout(history_group)
+        self.history_list = QListWidget()
+        self.history_list.setWordWrap(True)
         history_layout.addWidget(self.history_list, stretch=1)
         self.clear_history_btn = QPushButton("🗑 Очистить историю")
         self.clear_history_btn.clicked.connect(self.clear_history)
         history_layout.addWidget(self.clear_history_btn)
-        history_group.setMinimumWidth(280); history_group.setMaximumWidth(380)
+        history_group.setMinimumWidth(280)
+        history_group.setMaximumWidth(400)
         main_layout.addWidget(history_group, stretch=1)
+
         load_history(self, "history/insulation", self.history_list)
 
-    def create_input_fields(self):
-        clear_layout(self.input_layout); self.input_widgets.clear()
-        if self.radio_single.isChecked():
-            fields = [("Диаметр трубы (D)", "м", "например, 0.125", "D",
-                       "Наружный диаметр трубы, м.\nSr = π · D · L"),
-                      ("Толщина изоляции (t)", "м", "например, 0.08", "t",
-                       "Толщина слоя изоляции, м.\nVi = π · t · (D + t) · L"),
-                      ("Длина участка изоляции (L)", "м", "например, 130", "L",
-                       "Длина изолируемого участка, м.")]
-        elif self.radio_multiple_v1.isChecked():
-            fields = [("Диаметр крайних труб (D1)", "м", "например, 0.108", "D1",
-                       "Диаметр крайних труб, м."),
-                      ("Диаметр средней трубы (D2)", "м", "например, 0.076", "D2",
-                       "Диаметр средней трубы, м."),
-                      ("Толщина изоляции (t)", "м", "например, 0.1", "t",
-                       "Толщина слоя изоляции, м."),
-                      ("Расстояние между трубами (p)", "м", "например, 0.1", "p",
-                       "Зазор между трубами, м."),
-                      ("Длина участка изоляции (L)", "м", "например, 65", "L",
-                       "Длина участка, м.")]
-        else:
-            fields = [("Диаметр крайних труб (D1)", "м", "например, 0.108", "D1",
-                       "Диаметр крайних труб, м."),
-                      ("Расстояние между осями крайних труб (M)", "м", "например, 0.384", "M",
-                       "Расстояние между осями крайних труб, м."),
-                      ("Толщина изоляции (t)", "м", "например, 0.1", "t",
-                       "Толщина слоя изоляции, м."),
-                      ("Длина участка изоляции (L)", "м", "например, 65", "L",
-                       "Длина участка, м.")]
-        for label, unit, placeholder, key, tooltip in fields:
-            row, edit = create_input_row(label, unit, placeholder, tooltip=tooltip)
-            self.input_layout.addLayout(row); self.input_widgets[key] = edit
+    def _add_input_row(self, parent_layout, label_text, default_value,
+                       key, store, tooltip=""):
+        row = QHBoxLayout()
+        row.setSpacing(6)
+        lbl = QLabel(label_text)
+        lbl.setMinimumWidth(180)
+        lbl.setStyleSheet("font-weight: 500; font-size: 11px;")
+        if tooltip:
+            lbl.setToolTip(tooltip)
+        edit = QLineEdit(default_value)
+        edit.setMinimumHeight(26)
+        edit.setValidator(create_c_locale_double_validator(0.0, 1e9, 6))
+        edit.textChanged.connect(lambda *_, e=edit: mark_invalid(e, False))
+        if tooltip:
+            edit.setToolTip(tooltip)
+        unit = QLabel("м")
+        unit.setObjectName("unitLabel")
+        unit.setMinimumWidth(16)
+        row.addWidget(lbl)
+        row.addWidget(edit, stretch=1)
+        row.addWidget(unit)
+        parent_layout.addLayout(row)
+        store[key] = edit
 
-    def on_calc_type_changed(self):
-        self.create_input_fields(); self.clear_results()
+    def _build_results_block(self, target_dict: Dict[str, QLabel]) -> QVBoxLayout:
+        block = QVBoxLayout()
+        block.setSpacing(4)
 
-    def get_float(self, key, default=0.0):
-        edit = self.input_widgets.get(key)
+        titles = [
+            ("Sr",  "Площадь обертывания труб",         "м²"),
+            ("Spi", "Площадь покровного слоя изоляции", "м²"),
+            ("Vi",  "Объем изоляции",                   "м³"),
+        ]
+        for key, title, unit in titles:
+            cap = QLabel(title)
+            cap.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            cap.setStyleSheet(
+                "color: #569cd6; font-weight: bold; font-size: 11px; padding-top: 2px;")
+            block.addWidget(cap)
+
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            sym = QLabel(f"{key} =")
+            sym.setStyleSheet("font-weight: bold; font-size: 13px;")
+            sym.setMinimumWidth(45)
+            row.addWidget(sym)
+
+            val = QLabel("—")
+            val.setObjectName("resultLabel")
+            val.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            val.setMinimumHeight(28)
+            val.setMinimumWidth(150)
+            row.addWidget(val, stretch=1)
+            unit_lbl = QLabel(unit)
+            unit_lbl.setObjectName("unitLabel")
+            unit_lbl.setMinimumWidth(24)
+            row.addWidget(unit_lbl)
+
+            target_dict[key] = val
+            block.addLayout(row)
+
+        return block
+
+    def _create_v1_panel(self) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        group = QGroupBox("1 ВАРИАНТ (только для трёх труб)")
+        gl = QVBoxLayout(group)
+        gl.setSpacing(6)
+        self._add_input_row(
+            gl, "D1 — диаметр крайних труб:", "0.108", "D1", self.v1_inputs,
+            "Диаметр крайних (наружных) труб, м.")
+        self._add_input_row(
+            gl, "D2 — диаметр средней трубы:", "0.076", "D2", self.v1_inputs,
+            "Диаметр средней трубы, м.")
+        self._add_input_row(
+            gl, "t — толщина слоя теплоизоляции:", "0.1", "t", self.v1_inputs,
+            "Толщина слоя изоляции, м.")
+        self._add_input_row(
+            gl, "p — расстояние между трубами:", "0.1", "p", self.v1_inputs,
+            "Зазор между трубами, м.")
+        self._add_input_row(
+            gl, "L — длина участка изоляции:", "65", "L", self.v1_inputs,
+            "Длина изолируемого участка, м.")
+        outer.addWidget(group)
+
+        res_group = QGroupBox("Результаты")
+        res_layout = QVBoxLayout(res_group)
+        res_layout.setContentsMargins(6, 6, 6, 6)
+        res_layout.addLayout(self._build_results_block(self.v1_results))
+        outer.addWidget(res_group)
+        outer.addStretch()
+        return widget
+
+    def _create_v2_panel(self) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        group = QGroupBox("2 ВАРИАНТ (для 2-х и более труб)")
+        gl = QVBoxLayout(group)
+        gl.setSpacing(6)
+        self._add_input_row(
+            gl, "D1 — диаметр крайних труб:", "0.108", "D1", self.v2_inputs,
+            "Диаметр крайних труб, м.")
+        self._add_input_row(
+            gl, "M — расстояние между осями крайних труб:", "0.384", "M",
+            self.v2_inputs,
+            "Расстояние между осями крайних труб, м.")
+        self._add_input_row(
+            gl, "t — толщина слоя теплоизоляции:", "0.1", "t", self.v2_inputs,
+            "Толщина слоя изоляции, м.")
+        self._add_input_row(
+            gl, "L — длина участка изоляции:", "65", "L", self.v2_inputs,
+            "Длина изолируемого участка, м.")
+        outer.addWidget(group)
+
+        res_group = QGroupBox("Результаты")
+        res_layout = QVBoxLayout(res_group)
+        res_layout.setContentsMargins(6, 6, 6, 6)
+        res_layout.addLayout(self._build_results_block(self.v2_results))
+        outer.addWidget(res_group)
+        outer.addStretch()
+        return widget
+
+    def _create_single_panel(self) -> QWidget:
+        widget = QWidget()
+        outer = QVBoxLayout(widget)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(6)
+
+        group = QGroupBox("Одна труба")
+        gl = QVBoxLayout(group)
+        gl.setSpacing(6)
+        self._add_input_row(
+            gl, "D — диаметр трубы:", "0.125", "D", self.single_inputs,
+            "Наружный диаметр трубы, м.")
+        self._add_input_row(
+            gl, "t — толщина слоя теплоизоляции:", "0.08", "t", self.single_inputs,
+            "Толщина слоя изоляции, м.")
+        self._add_input_row(
+            gl, "L — длина участка изоляции:", "130", "L", self.single_inputs,
+            "Длина изолируемого участка, м.")
+        outer.addWidget(group)
+
+        res_group = QGroupBox("Результаты")
+        res_layout = QVBoxLayout(res_group)
+        res_layout.setContentsMargins(6, 6, 6, 6)
+        res_layout.addLayout(self._build_results_block(self.single_results))
+        outer.addWidget(res_group)
+        outer.addStretch()
+        return widget
+
+    def _store_for(self, mode: str) -> Dict[str, QLineEdit]:
+        if mode == "v1":
+            return self.v1_inputs
+        if mode == "v2":
+            return self.v2_inputs
+        return self.single_inputs
+
+    def _results_for(self, mode: str) -> Dict[str, QLabel]:
+        if mode == "v1":
+            return self.v1_results
+        if mode == "v2":
+            return self.v2_results
+        return self.single_results
+
+    def _type_name(self, mode: str) -> str:
+        return {"v1": "Вариант 1 (3 трубы)",
+                "v2": "Вариант 2 (2+ труб)",
+                "single": "Одна труба"}[mode]
+
+    def _get(self, mode: str, key: str, default: float = 0.0) -> float:
+        store = self._store_for(mode)
+        edit = store.get(key)
         return get_float_from_edit(edit, default) if edit else default
 
-    def _current_type_name(self):
-        if self.radio_single.isChecked(): return "Одна труба"
-        if self.radio_multiple_v1.isChecked(): return "Пучок (3 трубы)"
-        return "Пучок (2+)"
+    def _set_results(self, mode: str, result: Dict[str, float]) -> None:
+        target = self._results_for(mode)
+        for key in ("Sr", "Spi", "Vi"):
+            text = format_number(result[key], 6, self)
+            lbl = target.get(key)
+            if lbl is not None:
+                lbl.setText(text)
 
-    def calculate(self):
-        missing = [e for e in self.input_widgets.values() if not e.text().strip()]
-        for e in self.input_widgets.values():
+    def _clear_results(self) -> None:
+        for store in (self.v1_results, self.v2_results, self.single_results):
+            for lbl in store.values():
+                lbl.setText("—")
+
+    def _validate(self, mode: str) -> Optional[Dict[str, float]]:
+        store = self._store_for(mode)
+        missing = [e for e in store.values() if not e.text().strip()]
+        for e in store.values():
             mark_invalid(e, not e.text().strip())
         if missing:
-            QMessageBox.warning(self, "Ошибка ввода", "Заполните выделенные поля")
-            return
+            QMessageBox.warning(self, "Ошибка ввода",
+                                "Заполните выделенные поля")
+            return None
+
         try:
-            if self.radio_single.isChecked():
-                D = self.get_float("D"); t = self.get_float("t"); L = self.get_float("L")
-                if D <= 0 or t <= 0 or L <= 0: raise ValueError("Все значения должны быть положительными")
-                result = calculate_single_pipe_insulation(D, t, L)
-            elif self.radio_multiple_v1.isChecked():
-                D1 = self.get_float("D1"); D2 = self.get_float("D2"); t = self.get_float("t")
-                p = self.get_float("p"); L = self.get_float("L")
-                if any(v <= 0 for v in (D1, D2, t, p, L)): raise ValueError("Все значения должны быть положительными")
-                result = calculate_multiple_pipes_insulation_variant1(D1, D2, t, p, L)
-            else:
-                D1 = self.get_float("D1"); M = self.get_float("M"); t = self.get_float("t"); L = self.get_float("L")
-                if any(v <= 0 for v in (D1, M, t, L)): raise ValueError("Все значения должны быть положительными")
-                result = calculate_multiple_pipes_insulation_variant2(D1, M, t, L)
-            self.Sr_label.setText(f"Площадь обертывания труб (Sr): {format_number(result['Sr'], 6, self)} м²")
-            self.Spi_label.setText(f"Площадь покровного слоя изоляции (Spi): {format_number(result['Spi'], 6, self)} м²")
-            self.Vi_label.setText(f"Объем изоляции (Vi): {format_number(result['Vi'], 6, self)} м³")
-            ts = datetime.now().strftime("%H:%M:%S")
-            params = ", ".join(f"{k}={v.text()}" for k, v in self.input_widgets.items() if v.text().strip())
-            self.history_list.addItem(f"[{ts}] {self._current_type_name()}\n"
-                                      f"  {params}\n"
-                                      f"  → Sr={format_number(result['Sr'], 4, self)} м²; "
-                                      f"Vi={format_number(result['Vi'], 4, self)} м³")
-            self.history_list.scrollToBottom()
-            save_history(self, "history/insulation", self.history_list)
+            if mode == "v1":
+                D1 = self._get("v1", "D1")
+                D2 = self._get("v1", "D2")
+                t = self._get("v1", "t")
+                p = self._get("v1", "p")
+                L = self._get("v1", "L")
+                if any(v <= 0 for v in (D1, D2, t, p, L)):
+                    raise ValueError("Все значения должны быть положительными")
+                return calculate_multiple_pipes_insulation_variant1(D1, D2, t, p, L)
+            if mode == "v2":
+                D1 = self._get("v2", "D1")
+                M = self._get("v2", "M")
+                t = self._get("v2", "t")
+                L = self._get("v2", "L")
+                if any(v <= 0 for v in (D1, M, t, L)):
+                    raise ValueError("Все значения должны быть положительными")
+                return calculate_multiple_pipes_insulation_variant2(D1, M, t, L)
+            D = self._get("single", "D")
+            t = self._get("single", "t")
+            L = self._get("single", "L")
+            if any(v <= 0 for v in (D, t, L)):
+                raise ValueError("Все значения должны быть положительными")
+            return calculate_single_pipe_insulation(D, t, L)
         except Exception as e:
             QMessageBox.critical(self, "Ошибка расчета", str(e))
+            return None
+
+    def calculate_one(self, mode: str, save: bool = True) -> bool:
+        result = self._validate(mode)
+        if result is None:
+            return False
+        self._set_results(mode, result)
+
+        if save:
+            store = self._store_for(mode)
+            params = ", ".join(
+                f"{k}={v.text()}" for k, v in store.items() if v.text().strip())
+            ts = datetime.now().strftime("%H:%M:%S")
+            self.history_list.addItem(
+                f"[{ts}] {self._type_name(mode)}\n"
+                f"  {params}\n"
+                f"  → Sr={format_number(result['Sr'], 4, self)} м²; "
+                f"Spi={format_number(result['Spi'], 4, self)} м²; "
+                f"Vi={format_number(result['Vi'], 4, self)} м³")
+            self.history_list.scrollToBottom()
+            save_history(self, "history/insulation", self.history_list)
+        return True
+
+    def calculate_all(self):
+        for mode in ("v1", "v2", "single"):
+            self.calculate_one(mode, save=True)
 
     def clear_fields(self):
-        for edit in self.input_widgets.values():
-            edit.clear(); mark_invalid(edit, False)
-        self.clear_results()
-
-    def clear_results(self):
-        self.Sr_label.setText("Площадь обертывания труб (Sr): — м²")
-        self.Spi_label.setText("Площадь покровного слоя изоляции (Spi): — м²")
-        self.Vi_label.setText("Объем изоляции (Vi): — м³")
+        for store in (self.v1_inputs, self.v2_inputs, self.single_inputs):
+            for edit in store.values():
+                edit.clear()
+                mark_invalid(edit, False)
+        self._clear_results()
 
     def clear_history(self):
         clear_history(self, "history/insulation", self.history_list)
@@ -2885,16 +3068,23 @@ class FastenerTab(QWidget):
         super().__init__(); self.row_widgets = {}; self.init_ui()
 
     def init_ui(self):
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(15, 15, 15, 15); layout.setSpacing(15)
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(15, 15, 15, 15)
+        main_layout.setSpacing(15)
+
+        left_widget = QWidget()
+        layout = QVBoxLayout(left_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(15)
+
         info_group = QGroupBox("Коэффициенты материалов")
         info_layout = QVBoxLayout(info_group)
         info_text = QLabel("Данные приведены в основном для изделий из стали.\n"
                           "0,35 – алюминий | 1,08 – латунь | 0,97 – бронза | 1,13 – медь")
         info_text.setObjectName("infoLabel"); info_text.setWordWrap(True)
         info_layout.addWidget(info_text); layout.addWidget(info_group)
-        self.table = QTableWidget()
 
+        self.table = QTableWidget()
         self.table.setColumnCount(11)
         self.table.setHorizontalHeaderLabels([
             "№", "Тип метизов", "Стандарт / Наименование",
@@ -2912,6 +3102,7 @@ class FastenerTab(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.currentCellChanged.connect(self._update_headers_for_current_row)
         layout.addWidget(self.table, stretch=1)
+
         button_layout = QHBoxLayout()
         self.add_row_btn = QPushButton("➕ Добавить"); self.add_row_btn.setObjectName("addButton")
         self.add_row_btn.clicked.connect(self.add_row); button_layout.addWidget(self.add_row_btn)
@@ -2922,11 +3113,28 @@ class FastenerTab(QWidget):
         button_layout.addWidget(self.calculate_btn)
         self.clear_btn = QPushButton("Очистить всё"); self.clear_btn.clicked.connect(self.clear_all)
         button_layout.addWidget(self.clear_btn); layout.addLayout(button_layout)
+
         result_group = QGroupBox("Итоговый результат"); result_layout = QVBoxLayout(result_group)
         self.total_weight_label = QLabel("Общий вес: — кг"); self.total_weight_label.setObjectName("resultLabel")
         self.total_weight_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         result_layout.addWidget(self.total_weight_label); layout.addWidget(result_group)
+
+        main_layout.addWidget(left_widget, stretch=3)
+
+        history_group = QGroupBox("История расчетов")
+        history_layout = QVBoxLayout(history_group)
+        self.history_list = QListWidget()
+        self.history_list.setWordWrap(True)
+        history_layout.addWidget(self.history_list, stretch=1)
+        self.clear_history_btn = QPushButton("🗑 Очистить историю")
+        self.clear_history_btn.clicked.connect(self.clear_history)
+        history_layout.addWidget(self.clear_history_btn)
+        history_group.setMinimumWidth(280)
+        history_group.setMaximumWidth(380)
+        main_layout.addWidget(history_group, stretch=1)
+
         self.add_row()
+        load_history(self, "history/fastener", self.history_list)
 
     def _apply_headers_for_type(self, type_name: str) -> None:
         h1, h2, h3 = HEADERS_BY_TYPE.get(
@@ -2995,7 +3203,6 @@ class FastenerTab(QWidget):
         for col, key in enumerate(self.COLUMNS):
             self.table.setCellWidget(row, col, widgets[key])
         type_combo.setCurrentIndex(0)
-        self._apply_headers_for_type(type_combo.currentText())
 
     def on_type_changed(self, widgets, type_index):
         if type_index < 0: return
@@ -3120,7 +3327,9 @@ class FastenerTab(QWidget):
         return 0.0
 
     def calculate_all(self):
-        density = self.get_density(); total_weight = 0.0
+        density = self.get_density()
+        total_weight = 0.0
+        details = []
         for row, widgets in list(self.row_widgets.items()):
             try:
                 type_name = self.get_widget_text(widgets, 'type')
@@ -3143,12 +3352,36 @@ class FastenerTab(QWidget):
                 if isinstance(widgets.get('weight_total'), QLabel):
                     widgets['weight_total'].setText(format_number(weight_total, 3, self))
                 total_weight += weight_total
-            except Exception: logger.exception("FastenerTab: ошибка при обработке строки %s", row)
+
+                short_desc = f"{type_name} {diameter}"
+                if length and length not in ("", "—"):
+                    short_desc += f"×{length}"
+                if thickness and thickness not in ("", "—"):
+                    short_desc += f"×{thickness}"
+                details.append(f"{short_desc} — {qty} шт = {format_number(weight_total, 3, self)} кг")
+            except Exception:
+                logger.exception("FastenerTab: ошибка при обработке строки %s", row)
+
         self.total_weight_label.setText(f"Общий вес: {format_number(total_weight, 3, self)} кг")
+
+        if details:
+            ts = datetime.now().strftime("%H:%M:%S")
+            lines = [f"[{ts}] Позиций: {len(details)}"]
+            for d in details[:20]:
+                lines.append(f"  {d}")
+            if len(details) > 20:
+                lines.append(f"  ... и ещё {len(details) - 20} поз.")
+            lines.append(f"  ИТОГО: {format_number(total_weight, 3, self)} кг")
+            self.history_list.addItem("\n".join(lines))
+            self.history_list.scrollToBottom()
+            save_history(self, "history/fastener", self.history_list)
 
     def clear_all(self):
         self.table.setRowCount(0); self.row_widgets.clear()
         self.total_weight_label.setText("Общий вес: — кг"); self.add_row()
+
+    def clear_history(self):
+        clear_history(self, "history/fastener", self.history_list)
 
 
 # ============================================================================
@@ -3157,18 +3390,50 @@ class FastenerTab(QWidget):
 
 class SectionPreview(QWidget):
     def __init__(self, parent=None, min_height=190):
-        super().__init__(parent); self.product_index = 0
+        super().__init__(parent)
+        self.product_index = 0
+        self._pixmap = None
+        self._custom = False
         self.setMinimumHeight(min_height)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
+        self._load_image()
+
+    def _load_image(self):
+        self._pixmap = None
+        self._custom = False
+        if 0 <= self.product_index < len(SECTION_IMAGES):
+            path = os.path.join(_IMAGES_DIR, SECTION_IMAGES[self.product_index])
+            if os.path.isfile(path):
+                pm = QPixmap(path)
+                if not pm.isNull():
+                    self._pixmap = pm
+                    self._custom = True
 
     def set_product(self, index):
-        self.product_index = index; self.update()
+        self.product_index = index
+        self._load_image()
+        self.update()
 
     def paintEvent(self, event):
-        painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.fillRect(self.rect(), QColor("#202124"))
         painter.setPen(QPen(QColor("#4ec9b0"), 2))
         painter.drawRoundedRect(self.rect().adjusted(1, 1, -1, -1), 8, 8)
+
+        if self._pixmap is not None:
+            inner = self.rect().adjusted(10, 10, -10, -10)
+            scaled = self._pixmap.scaled(
+                inner.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = inner.x() + (inner.width() - scaled.width()) // 2
+            y = inner.y() + (inner.height() - scaled.height()) // 2
+            painter.drawPixmap(x, y, scaled)
+            painter.end()
+            return
+
         cx, cy = self.width() // 2, self.height() // 2 + 5
         scale = max(1, min(self.width(), self.height()) * 0.58)
         p = painter; p.setBrush(QColor("#3f444a")); p.setPen(QPen(QColor("#9cdcfe"), 2))
@@ -3215,7 +3480,7 @@ class SectionPreview(QWidget):
         p.setPen(QColor("#d7ba7d"))
         p.drawText(15, 25, ["Круглая труба", "Круг / пруток", "Швеллер", "Двутавр",
                             "Лист", "Шестигранник", "Уголок"][i])
-        p.end()
+        painter.end()
 
     def _label(self, painter, text, x, y):
         painter.setPen(QColor("#dcdcaa"))
@@ -3481,23 +3746,24 @@ class PaintingTab(QWidget):
                 ("Длина", "м", "например, 6", "L", "S = π · D · L")],
             1: [("Диаметр", "мм", "например, 20", "d", "S = π · d · L"),
                 ("Длина", "м", "например, 6", "L", "S = π · d · L")],
-            2: [("Высота h", "мм", "например, 100", "h", "S = (2h + 4b − 2s) · L"),
-                ("Ширина полки b", "мм", "например, 46", "b", "S = (2h + 4b − 2s) · L"),
-                ("Толщина стенки s", "мм", "например, 4.5", "s", "S = (2h + 4b − 2s) · L"),
-                ("Длина", "м", "например, 6", "L", "S = (2h + 4b − 2s) · L")],
-            3: [("Высота h", "мм", "например, 200", "h", "S = (2h + 4b − 2s) · L"),
-                ("Ширина полки b", "мм", "например, 100", "b", "S = (2h + 4b − 2s) · L"),
-                ("Толщина стенки s", "мм", "например, 5.5", "s", "S = (2h + 4b − 2s) · L"),
-                ("Толщина полки t", "мм", "например, 8.5", "t", "Учитывается в периметре"),
-                ("Длина", "м", "например, 6", "L", "S = (2h + 4b − 2s) · L")],
+            2: [("Высота h", "мм", "например, 100", "h", "P = 2h + 4b − 2s − 4t"),
+                ("Ширина полки b", "мм", "например, 46", "b", "P = 2h + 4b − 2s − 4t"),
+                ("Толщина стенки s", "мм", "например, 4.5", "s", "P = 2h + 4b − 2s − 4t"),
+                ("Толщина полки t", "мм", "например, 7.6", "t", "P = 2h + 4b − 2s − 4t"),
+                ("Длина", "м", "например, 6", "L", "S = P · L")],
+            3: [("Высота h", "мм", "например, 200", "h", "P = 2h + 4b − 2s − 4t"),
+                ("Ширина полки b", "мм", "например, 100", "b", "P = 2h + 4b − 2s − 4t"),
+                ("Толщина стенки s", "мм", "например, 5.5", "s", "P = 2h + 4b − 2s − 4t"),
+                ("Толщина полки t", "мм", "например, 8.5", "t", "P = 2h + 4b − 2s − 4t"),
+                ("Длина", "м", "например, 6", "L", "S = P · L")],
             4: [("Ширина", "мм", "например, 1000", "w", "S = 2 · w · L (обе стороны)"),
                 ("Длина", "мм", "например, 2000", "L", "S = 2 · w · L"),
                 ("Толщина", "мм", "например, 3", "t", "Толщина на площадь не влияет")],
             5: [("Размер под ключ (S)", "мм", "например, 17", "S", "сторона = S/√3; P = 6·сторона"),
                 ("Длина", "м", "например, 6", "L", "S = P · L")],
-            6: [("Полка A", "мм", "например, 50", "A", "P ≈ 2A + 2B"),
-                ("Полка B", "мм", "например, 50", "B", "P ≈ 2A + 2B"),
-                ("Толщина полки", "мм", "например, 5", "t", "Слабо влияет"),
+            6: [("Полка A", "мм", "например, 50", "A", "P = 2A + 2B − 2t"),
+                ("Полка B", "мм", "например, 50", "B", "P = 2A + 2B − 2t"),
+                ("Толщина полки", "мм", "например, 5", "t", "P = 2A + 2B − 2t"),
                 ("Длина", "м", "например, 6", "L", "S = P · L")],
         }
         config = configs.get(index, [])
@@ -3558,10 +3824,12 @@ class PaintingTab(QWidget):
             elif index == 1:
                 d = self.get_float("d"); L = self.get_float("L"); area = paint_area_circle(d, L)
             elif index == 2:
-                h = self.get_float("h"); b = self.get_float("b"); s = self.get_float("s"); L = self.get_float("L")
-                area = paint_area_channel(h, b, s, L)
+                h = self.get_float("h"); b = self.get_float("b")
+                s = self.get_float("s"); t = self.get_float("t"); L = self.get_float("L")
+                area = paint_area_channel(h, b, s, t, L)
             elif index == 3:
-                h = self.get_float("h"); b = self.get_float("b"); s = self.get_float("s"); t = self.get_float("t"); L = self.get_float("L")
+                h = self.get_float("h"); b = self.get_float("b")
+                s = self.get_float("s"); t = self.get_float("t"); L = self.get_float("L")
                 area = paint_area_beam(h, b, s, t, L)
             elif index == 4:
                 w = self.get_float("w"); L_mm = self.get_float("L"); area = paint_area_sheet(w, L_mm)
@@ -3724,21 +3992,55 @@ class AnticorrTab(QWidget):
 
 class WeldPreviewWidget(QWidget):
     def __init__(self, parent=None):
-        super().__init__(parent); self.joint_key = "C2"
-        self.setMinimumHeight(120); self.setMinimumWidth(200)
+        super().__init__(parent)
+        self.joint_key = "C2"
+        self._pixmap = None
+        self.setMinimumHeight(120)
+        self.setMinimumWidth(200)
+        self._load_image()
+
+    def _load_image(self):
+        self._pixmap = None
+        filename = WELD_IMAGES.get(self.joint_key)
+        if not filename:
+            return
+        path = os.path.join(_IMAGES_DIR, filename)
+        if os.path.isfile(path):
+            pm = QPixmap(path)
+            if not pm.isNull():
+                self._pixmap = pm
 
     def setJoint(self, key):
-        self.joint_key = key; self.update()
+        self.joint_key = key
+        self._load_image()
+        self.update()
 
     def paintEvent(self, event):
-        painter = QPainter(self); painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        if self._pixmap is not None:
+            inner = self.rect().adjusted(6, 6, -6, -6)
+            scaled = self._pixmap.scaled(
+                inner.size(),
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )
+            x = inner.x() + (inner.width() - scaled.width()) // 2
+            y = inner.y() + (inner.height() - scaled.height()) // 2
+            painter.drawPixmap(x, y, scaled)
+            painter.end()
+            return
+
         logic_w = 220; logic_h = 90
         widget_w = self.width(); widget_h = self.height()
-        if widget_w <= 0 or widget_h <= 0: painter.end(); return
+        if widget_w <= 0 or widget_h <= 0:
+            painter.end(); return
         scale_x = widget_w / logic_w; scale_y = widget_h / logic_h
         scale = min(scale_x, scale_y)
-        if scale <= 0: painter.end(); return
-        offset_x = (widget_w - logic_w * scale) / 2; offset_y = (widget_h - logic_h * scale) / 2
+        if scale <= 0:
+            painter.end(); return
+        offset_x = (widget_w - logic_w * scale) / 2
+        offset_y = (widget_h - logic_h * scale) / 2
         painter.translate(offset_x, offset_y); painter.scale(scale, scale)
         dispatch = {"C2": self.draw_C2, "C8": self.draw_C8, "C17": self.draw_C17,
                     "U5": self.draw_U5, "U7": self.draw_U7, "U8": self.draw_U8,
@@ -3746,8 +4048,11 @@ class WeldPreviewWidget(QWidget):
                     "T3": self.draw_T3, "U4": self.draw_U4, "U5_S": self.draw_U5_S,
                     "C25": self.draw_C25}
         method = dispatch.get(self.joint_key)
-        if method: method(painter, logic_w, logic_h)
-        else: painter.drawText(QRectF(0, 0, logic_w, logic_h), Qt.AlignmentFlag.AlignCenter, "Схема не определена")
+        if method:
+            method(painter, logic_w, logic_h)
+        else:
+            painter.drawText(QRectF(0, 0, logic_w, logic_h),
+                             Qt.AlignmentFlag.AlignCenter, "Схема не определена")
         painter.end()
 
     def _draw_text(self, painter, text, x, y, color="#94a3b8"):
@@ -3882,7 +4187,15 @@ class WeldingTab(QWidget):
         super().__init__(); self.setMinimumSize(750, 700); self.init_ui()
 
     def init_ui(self):
-        self.main_layout = QVBoxLayout(self); self.main_layout.setSpacing(15)
+        outer_layout = QHBoxLayout(self)
+        outer_layout.setContentsMargins(15, 15, 15, 15)
+        outer_layout.setSpacing(15)
+
+        left_widget = QWidget()
+        self.main_layout = QVBoxLayout(left_widget)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(15)
+
         top_grid = QGridLayout(); top_grid.setSpacing(15)
         self.category_combo = QComboBox()
         self.category_combo.addItems(["Трубы (ГОСТ 16037-80)", "Листы (ГОСТ 5264-80)", "Прутки (ГОСТ 5264-80)"])
@@ -3935,9 +4248,27 @@ class WeldingTab(QWidget):
         btn_layout = QHBoxLayout(); btn_layout.addStretch()
         reset_btn = QPushButton("🔄 Сбросить"); reset_btn.setObjectName("reset"); reset_btn.clicked.connect(self.reset_all)
         btn_layout.addWidget(reset_btn)
+        save_btn = QPushButton("💾 В историю"); save_btn.setObjectName("primary"); save_btn.clicked.connect(self.save_to_history)
+        btn_layout.addWidget(save_btn)
         copy_btn = QPushButton("📋 Копировать результаты"); copy_btn.setObjectName("primary"); copy_btn.clicked.connect(self.export_results)
         btn_layout.addWidget(copy_btn); self.main_layout.addLayout(btn_layout)
+
+        outer_layout.addWidget(left_widget, stretch=3)
+
+        history_group = QGroupBox("История расчетов")
+        history_layout = QVBoxLayout(history_group)
+        self.history_list = QListWidget()
+        self.history_list.setWordWrap(True)
+        history_layout.addWidget(self.history_list, stretch=1)
+        self.clear_history_btn = QPushButton("🗑 Очистить историю")
+        self.clear_history_btn.clicked.connect(self.clear_history)
+        history_layout.addWidget(self.clear_history_btn)
+        history_group.setMinimumWidth(280)
+        history_group.setMaximumWidth(400)
+        outer_layout.addWidget(history_group, stretch=1)
+
         self.on_category_changed()
+        load_history(self, "history/welding", self.history_list)
 
     def create_pipe_widget(self):
         widget = QWidget(); layout = QVBoxLayout(widget); layout.setSpacing(10)
@@ -4053,16 +4384,13 @@ class WeldingTab(QWidget):
                 g = 2.0; e = b + b_bevel + 2
                 F = (S * b) + (0.5 * b_bevel * h_bevel) + (0.75 * e * g)
             elif joint == "У5":
-                # Угловое без скоса кромок (с фланцем). Односторонний угловой шов, катет K ≈ S.
                 K = S
                 F = 0.7 * K * K
             elif joint == "У7":
-                # Угловое со скосом одной кромки. Угол скоса 45°, катет K ≈ S.
                 K = S; angle = 45
                 F_bevel = 0.5 * K * (K * math.tan(math.radians(angle)))
                 F = F_bevel + (0.2 * K * K)
             elif joint == "У8":
-                # Угловое двустороннее без скоса. Два угловых шва по K ≈ S.
                 K = S
                 F = 2 * 0.7 * K * K
         elif cat_idx == 1:
@@ -4080,16 +4408,25 @@ class WeldingTab(QWidget):
                 F = (math.pi * d * d / 4.0) * 0.45
         mass_pure = (F * 1e-6) * length_m * DENSITY
         mass_total = mass_pure * k_method * k_pos * k_loss
-        self.res_len_label.setText(f"{length_m:.2f} м"); self.res_F_label.setText(f"{F:.2f} мм²")
-        self.res_pure_label.setText(f"{mass_pure:.3f} кг"); self.res_total_label.setText(f"{mass_total:.3f} кг")
+        self.res_len_label.setText(f"{length_m:.2f} м")
+        self.res_F_label.setText(f"{F:.2f} мм²")
+        self.res_pure_label.setText(f"{mass_pure:.3f} кг")
+        self.res_total_label.setText(f"{mass_total:.3f} кг")
+
         self.gas_co2_row_label.hide(); self.gas_co2_label.hide()
         self.gas_ar_row_label.hide(); self.gas_ar_label.hide()
+
         if method == 1:
-            gas_co2 = mass_pure * 1.25; self.gas_co2_label.setText(f"{gas_co2:.2f} кг")
+            gas_co2_kg = length_m * CO2_LITERS_PER_METER * CO2_DENSITY_KG_PER_LITER
+            gas_co2_cyl = gas_co2_kg / CO2_CYLINDER_KG if CO2_CYLINDER_KG > 0 else 0.0
+            self.gas_co2_label.setText(
+                f"{gas_co2_kg:.3f} кг ({gas_co2_cyl:.4f} баллонов по {CO2_CYLINDER_KG:.0f} кг)")
             self.gas_co2_row_label.show(); self.gas_co2_label.show()
         elif method == 2:
-            gas_ar_liters = length_m * 120; cylinders = gas_ar_liters / 6000.0
-            self.gas_ar_label.setText(f"{gas_ar_liters:.0f} л ({cylinders:.2f} баллонов)")
+            gas_ar_liters = length_m * AR_LITERS_PER_METER
+            cylinders = gas_ar_liters / AR_CYLINDER_LITERS if AR_CYLINDER_LITERS > 0 else 0.0
+            self.gas_ar_label.setText(
+                f"{gas_ar_liters:.0f} л ({cylinders:.4f} баллонов по {AR_CYLINDER_LITERS:.0f} л)")
             self.gas_ar_row_label.show(); self.gas_ar_label.show()
 
     def reset_all(self):
@@ -4099,6 +4436,55 @@ class WeldingTab(QWidget):
         self.pipe_count_edit.setText("4"); self.pipe_joint_combo.setCurrentIndex(0)
         self.sheet_S_edit.setText("8"); self.sheet_L_edit.setText("10"); self.sheet_joint_combo.setCurrentIndex(0)
         self.bar_d_edit.setText("25"); self.bar_count_edit.setText("10"); self.on_category_changed()
+
+    def save_to_history(self):
+        try:
+            length_m = float(self.res_len_label.text().split()[0].replace(',', '.'))
+            F = float(self.res_F_label.text().split()[0].replace(',', '.'))
+        except (ValueError, IndexError):
+            QMessageBox.warning(self, "Ошибка", "Нет корректных результатов для сохранения"); return
+        if F <= 0 or length_m <= 0:
+            QMessageBox.warning(self, "Ошибка", "Нет результатов для сохранения в историю"); return
+
+        cat = self.category_combo.currentText()
+        method = self.method_combo.currentText()
+        position = self.position_combo.currentText()
+        qual = self.qual_combo.currentText()
+        cat_idx = self.category_combo.currentIndex()
+
+        if cat_idx == 0:
+            joint = self.pipe_joint_combo.currentText().split("—")[0].strip()
+            params = (f"D={self.pipe_D_edit.text()} мм, S={self.pipe_S_edit.text()} мм, "
+                      f"стыков={self.pipe_count_edit.text()}")
+        elif cat_idx == 1:
+            joint = self.sheet_joint_combo.currentText().split("—")[0].strip()
+            params = f"S={self.sheet_S_edit.text()} мм, L={self.sheet_L_edit.text()} м"
+        else:
+            joint = "С25"
+            params = f"d={self.bar_d_edit.text()} мм, стыков={self.bar_count_edit.text()}"
+
+        ts = datetime.now().strftime("%H:%M:%S")
+        entry_lines = [
+            f"[{ts}] {cat} | {joint}",
+            f"  {method}, положение: {position}",
+            f"  Квалификация: {qual}",
+            f"  {params}",
+            f"  → L={self.res_len_label.text()}; F={self.res_F_label.text()}",
+            f"  Чистая масса: {self.res_pure_label.text()}; "
+            f"Расход материалов: {self.res_total_label.text()}",
+        ]
+        if not self.gas_co2_row_label.isHidden():
+            entry_lines.append(f"  Газ CO₂: {self.gas_co2_label.text()}")
+        if not self.gas_ar_row_label.isHidden():
+            entry_lines.append(f"  Газ Ar: {self.gas_ar_label.text()}")
+
+        self.history_list.addItem("\n".join(entry_lines))
+        self.history_list.scrollToBottom()
+        save_history(self, "history/welding", self.history_list)
+        QMessageBox.information(self, "Готово", "✅ Расчёт сохранён в историю")
+
+    def clear_history(self):
+        clear_history(self, "history/welding", self.history_list)
 
     def export_results(self):
         lines = ["📊 Результаты расчёта сварочного калькулятора", "----------------------------------------",
@@ -4136,7 +4522,7 @@ class HelpTab(QWidget):
                           "• Расчёт площади окраски и расхода краски\n"
                           "• Библиотека норм АКЗ (ЛКМ)\n"
                           "• Расчёт массы крепёжных изделий\n"
-                          "• Расчёт объёма тепловой изоляции\n"
+                          "• Расчёт объёма тепловой изоляции (три режима)\n"
                           "• Расчёт материалов на АКЗ по Excel\n"
                           "• Расчёт норм расхода сварочных материалов\n"
                           "• Пескоструйная очистка (Sa 1 … Sa 3)\n"
@@ -4146,18 +4532,21 @@ class HelpTab(QWidget):
                           "При наведении на поле — подсказка с формулой.\n"
                           "Пустые поля подсвечиваются красным при попытке расчёта.\n"
                           "Поля результатов копируются: двойной клик — всё, ПКМ — только число.\n"
-                          "История расчётов и пользовательские материалы сохраняются автоматически.\n"
-                          "Во вкладке «Крепеж» заголовки столбцов 3/4/5 меняются\n"
-                          "в зависимости от типа выбранного метиза.\n"
-                          "В диалоге «Материалы» пользовательские записи можно править\n"
-                          "прямо в таблице: двойной клик → правка → Enter.")
+                          "История расчётов и пользовательские материалы сохраняются автоматически.\n\n"
+                          "Формулы площади окраски:\n"
+                          "• Уголок — P = 2A + 2B − 2t\n"
+                          "• Швеллер — P = 2h + 4b − 2s − 4t\n"
+                          "• Двутавр — P = 2h + 4b − 2s − 4t\n\n"
+                          "Расход защитных газов при сварке:\n"
+                          "• CO₂ для MIG/MAG — 60 л/м шва;\n"
+                          "• Аргон для TIG — 150 л/м шва.")
         info_text.setWordWrap(True); info_text.setStyleSheet("font-size: 13px; color: #e0e0e0;")
         layout.addWidget(info_text)
         dev_label = QLabel("Разработчик: Тищенко Вячеслав Владимирович | Сметный отдел ООО «СГК»")
         dev_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         dev_label.setStyleSheet("font-size: 12px; color: #9cdcfe; background-color: #2d2d30; padding: 10px; border-radius: 4px;")
         layout.addWidget(dev_label)
-        version = QLabel("Версия 5.4.2 (исправлен расчёт угловых соединений У5 и У8 во вкладке «Сварка»)")
+        version = QLabel("Версия 5.6 (исправлены формулы окраски уголка, швеллера, двутавра; расход газов)")
         version.setAlignment(Qt.AlignmentFlag.AlignCenter)
         version.setStyleSheet("font-size: 11px; color: #8b949e;"); layout.addWidget(version)
         layout.addStretch()
